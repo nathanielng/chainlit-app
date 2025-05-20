@@ -1,0 +1,9 @@
+{
+    "name": "Chainlit + Bedrock Chat",
+    "description": "A chat application using Chainlit and Amazon Bedrock",
+    "userEnv": [],
+    "theme": {
+      "primaryColor": "#FF9900"
+    }
+  }
+  
