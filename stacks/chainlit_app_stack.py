@@ -111,7 +111,8 @@ class ChainlitAppStack(Stack):
 
         # Create CloudFront distribution
         distribution = cloudfront.Distribution(
-            self, "ChainlitDistribution",
+            self,
+            "ChainlitDistribution",
             default_behavior=cloudfront.BehaviorOptions(
                 origin=origins.LoadBalancerV2Origin(
                     fargate_service.load_balancer,
@@ -124,7 +125,9 @@ class ChainlitAppStack(Stack):
                 ),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
-                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED
+                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                # Forwards all viewer request headers, query strings, and cookies to the origin
+                origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER
             )
         )
 
@@ -142,12 +145,6 @@ class ChainlitAppStack(Stack):
         fargate_service.task_definition.task_role.add_to_policy(bedrock_policy)
 
         # Output the URLs
-        # CfnOutput(
-        #     self, "ChainlitAppURL",
-        #     value=fargate_service.load_balancer.load_balancer_dns_name,
-        #     description="URL of the ALB"
-        # )
-
         CfnOutput(
             self, "ChainlitCloudFrontURL",
             value=distribution.distribution_domain_name,
