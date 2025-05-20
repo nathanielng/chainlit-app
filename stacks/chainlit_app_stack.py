@@ -7,6 +7,7 @@ from aws_cdk import (
     aws_ecs_patterns as ecs_patterns,
     aws_iam as iam,
     aws_logs as logs,
+    aws_s3 as s3,
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
     aws_certificatemanager as acm,
@@ -109,7 +110,22 @@ class ChainlitAppStack(Stack):
             }]
         )
 
-        # Create CloudFront distribution
+        # Create S3 bucket for CloudFront logs
+        logs_bucket = s3.Bucket(
+            self,
+            "CloudFrontLogsBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            object_ownership=s3.ObjectOwnership.OBJECT_WRITER,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    expiration=Duration.days(90)  # Retain logs for 90 days
+                )
+            ]
+        )
+
+        # Create CloudFront distribution with logging enabled
         distribution = cloudfront.Distribution(
             self,
             "ChainlitDistribution",
@@ -128,7 +144,10 @@ class ChainlitAppStack(Stack):
                 cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
                 # Forwards all viewer request headers, query strings, and cookies to the origin
                 origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER
-            )
+            ),
+            # Enable access logging
+            log_bucket=logs_bucket,
+            log_file_prefix="cloudfront-logs/"
         )
 
         # Add permissions for Bedrock
@@ -139,7 +158,7 @@ class ChainlitAppStack(Stack):
                 "bedrock:Converse",
                 "bedrock:ConverseStream"
             ],
-            resources=["*"]  # You might want to restrict this to specific model ARNs in production
+            resources=["arn:aws:bedrock:*:*:model/*"]  # Restrict to Bedrock model ARNs
         )
 
         fargate_service.task_definition.task_role.add_to_policy(bedrock_policy)
