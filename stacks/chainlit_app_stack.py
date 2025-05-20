@@ -10,6 +10,8 @@ from aws_cdk import (
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
     aws_certificatemanager as acm,
+    aws_elasticloadbalancingv2 as elbv2,
+    aws_secretsmanager as secretsmanager,
     CfnOutput
 )
 from constructs import Construct
@@ -29,6 +31,15 @@ class ChainlitAppStack(Stack):
         cluster = ecs.Cluster(
             self, "ChainlitCluster",
             vpc=vpc
+        )
+
+        # Create secret for custom header value
+        custom_header_secret = secretsmanager.Secret(
+            self, "CustomHeaderSecret",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                exclude_characters='/@"',
+                password_length=32
+            )
         )
 
         # Build Docker image from local directory
@@ -53,9 +64,49 @@ class ChainlitAppStack(Stack):
                 ),
                 environment={
                     "LOG_LEVEL": "INFO"
+                },
+                secrets={
+                    "CUSTOM_HEADER_VALUE": ecs.Secret.from_secrets_manager(custom_header_secret)
                 }
             ),
             public_load_balancer=True
+        )
+
+        # Add ALB listener rule to check for custom header
+        allow_rule = elbv2.CfnListenerRule(
+            self, "AllowWithHeader",
+            listener_arn=fargate_service.listener.listener_arn,
+            priority=10,
+            conditions=[{
+                "field": "http-header",
+                "httpHeaderConfig": {
+                    "httpHeaderName": "X-Custom-Header",
+                    "values": [custom_header_secret.secret_value.unsafe_unwrap()]
+                }
+            }],
+            actions=[{
+                "type": "forward",
+                "targetGroupArn": fargate_service.target_group.target_group_arn
+            }]
+        )
+
+        # Add default deny rule with lower priority
+        deny_rule = elbv2.CfnListenerRule(
+            self, "DefaultDeny",
+            listener_arn=fargate_service.listener.listener_arn,
+            priority=20,
+            conditions=[{
+                "field": "path-pattern",
+                "values": ["*"]
+            }],
+            actions=[{
+                "type": "fixed-response",
+                "fixedResponseConfig": {
+                    "statusCode": "403",
+                    "contentType": "text/plain",
+                    "messageBody": "Access denied"
+                }
+            }]
         )
 
         # Create CloudFront distribution
@@ -66,7 +117,10 @@ class ChainlitAppStack(Stack):
                     fargate_service.load_balancer,
                     protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY,
                     connection_attempts=3,
-                    connection_timeout=Duration.seconds(10)
+                    connection_timeout=Duration.seconds(10),
+                    custom_headers={
+                        "X-Custom-Header": custom_header_secret.secret_value.unsafe_unwrap()
+                    }
                 ),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
@@ -98,4 +152,10 @@ class ChainlitAppStack(Stack):
             self, "ChainlitCloudFrontURL",
             value=distribution.distribution_domain_name,
             description="CloudFront URL of the Chainlit application"
+        )
+
+        CfnOutput(
+            self, "CustomHeaderSecretARN",
+            value=custom_header_secret.secret_arn,
+            description="ARN of the custom header secret in Secrets Manager"
         )
