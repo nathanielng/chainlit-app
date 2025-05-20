@@ -1,4 +1,5 @@
 from aws_cdk import (
+    Duration,
     Stack,
     aws_ec2 as ec2,
     aws_ecs as ecs,
@@ -6,7 +7,9 @@ from aws_cdk import (
     aws_ecs_patterns as ecs_patterns,
     aws_iam as iam,
     aws_logs as logs,
-    Duration,
+    aws_cloudfront as cloudfront,
+    aws_cloudfront_origins as origins,
+    aws_certificatemanager as acm,
     CfnOutput
 )
 from constructs import Construct
@@ -55,6 +58,22 @@ class ChainlitAppStack(Stack):
             public_load_balancer=True
         )
 
+        # Create CloudFront distribution
+        distribution = cloudfront.Distribution(
+            self, "ChainlitDistribution",
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.LoadBalancerV2Origin(
+                    fargate_service.load_balancer,
+                    protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+                    connection_attempts=3,
+                    connection_timeout=Duration.seconds(10)
+                ),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED
+            )
+        )
+
         # Add permissions for Bedrock
         bedrock_policy = iam.PolicyStatement(
             actions=[
@@ -68,9 +87,15 @@ class ChainlitAppStack(Stack):
 
         fargate_service.task_definition.task_role.add_to_policy(bedrock_policy)
 
-        # Output the URL of the load balancer
+        # Output the URLs
+        # CfnOutput(
+        #     self, "ChainlitAppURL",
+        #     value=fargate_service.load_balancer.load_balancer_dns_name,
+        #     description="URL of the ALB"
+        # )
+
         CfnOutput(
-            self, "ChainlitAppURL",
-            value=fargate_service.load_balancer.load_balancer_dns_name,
-            description="URL of the Chainlit application"
+            self, "ChainlitCloudFrontURL",
+            value=distribution.distribution_domain_name,
+            description="CloudFront URL of the Chainlit application"
         )
